@@ -3,34 +3,36 @@ import threading
 
 import pytest
 
-from securechat.auth import UserStore
-from securechat.server import ChatServer, make_server_context
+from securechat.auth import StockageUtilisateurs
+from securechat.server import ServeurMessagerie, creer_contexte_serveur
 
 
 @pytest.fixture(scope="session")
-def certs(tmp_path_factory):
-    folder = tmp_path_factory.mktemp("certs")
-    cert, key = folder / "server.crt", folder / "server.key"
+def certificats(tmp_path_factory):
+    dossier = tmp_path_factory.mktemp("certs")
+    certificat, cle = dossier / "server.crt", dossier / "server.key"
     subprocess.run(
         [
             "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(key), "-out", str(cert), "-days", "1",
+            "-keyout", str(cle), "-out", str(certificat), "-days", "1",
             "-subj", "/CN=localhost",
             "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
         ],
         check=True,
         capture_output=True,
     )
-    return str(cert), str(key)
+    return str(certificat), str(cle)
 
 
 @pytest.fixture
-def server(certs, tmp_path):
-    cert, key = certs
-    users = UserStore(str(tmp_path / "users.json"))
-    srv = ChatServer("127.0.0.1", 0, make_server_context(cert, key), users)
-    thread = threading.Thread(target=srv.serve_forever, daemon=True)
-    thread.start()
+def serveur(certificats, tmp_path):
+    certificat, cle = certificats
+    utilisateurs = StockageUtilisateurs(str(tmp_path / "users.json"))
+    srv = ServeurMessagerie(
+        "127.0.0.1", 0, creer_contexte_serveur(certificat, cle), utilisateurs
+    )
+    fil = threading.Thread(target=srv.demarrer, daemon=True)
+    fil.start()
     yield srv
-    srv.shutdown()
-    thread.join(timeout=5)
+    srv.arreter()
+    fil.join(timeout=5)

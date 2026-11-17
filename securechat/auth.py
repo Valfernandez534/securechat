@@ -4,57 +4,53 @@ import json
 import os
 import threading
 
-# scrypt cost parameters (OWASP minimum recommendation)
 SCRYPT_N = 2**14
 SCRYPT_R = 8
 SCRYPT_P = 1
-SALT_SIZE = 16
+TAILLE_SEL = 16
 
 
-def hash_password(password, salt):
+def hacher_mot_de_passe(mot_de_passe, sel):
     return hashlib.scrypt(
-        password.encode("utf-8"), salt=salt, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32
+        mot_de_passe.encode("utf-8"), salt=sel, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P, dklen=32
     )
 
 
-class UserStore:
-    """Users saved in a JSON file: {username: {"salt": hex, "hash": hex}}."""
+class StockageUtilisateurs:
+    def __init__(self, chemin):
+        self.chemin = chemin
+        self.verrou = threading.Lock()
+        self.utilisateurs = {}
+        if os.path.exists(chemin):
+            with open(chemin, encoding="utf-8") as f:
+                self.utilisateurs = json.load(f)
 
-    def __init__(self, path):
-        self.path = path
-        self.lock = threading.Lock()
-        self.users = {}
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
-                self.users = json.load(f)
-
-    def register(self, username, password):
-        with self.lock:
-            if username in self.users:
+    def inscrire(self, nom, mot_de_passe):
+        with self.verrou:
+            if nom in self.utilisateurs:
                 return False
-            salt = os.urandom(SALT_SIZE)
-            self.users[username] = {
-                "salt": salt.hex(),
-                "hash": hash_password(password, salt).hex(),
+            sel = os.urandom(TAILLE_SEL)
+            self.utilisateurs[nom] = {
+                "sel": sel.hex(),
+                "hash": hacher_mot_de_passe(mot_de_passe, sel).hex(),
             }
-            self._save()
+            self.sauvegarder()
             return True
 
-    def verify(self, username, password):
-        user = self.users.get(username)
-        if user is None:
-            # hash anyway so the response time does not tell if the user exists
-            hash_password(password, bytes(SALT_SIZE))
+    def verifier(self, nom, mot_de_passe):
+        utilisateur = self.utilisateurs.get(nom)
+        if utilisateur is None:
+            hacher_mot_de_passe(mot_de_passe, bytes(TAILLE_SEL))
             return False
-        computed = hash_password(password, bytes.fromhex(user["salt"]))
-        return hmac.compare_digest(computed, bytes.fromhex(user["hash"]))
+        calcule = hacher_mot_de_passe(mot_de_passe, bytes.fromhex(utilisateur["sel"]))
+        return hmac.compare_digest(calcule, bytes.fromhex(utilisateur["hash"]))
 
-    def _save(self):
-        folder = os.path.dirname(self.path)
-        if folder:
-            os.makedirs(folder, exist_ok=True)
-        tmp = self.path + ".tmp"
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    def sauvegarder(self):
+        dossier = os.path.dirname(self.chemin)
+        if dossier:
+            os.makedirs(dossier, exist_ok=True)
+        temporaire = self.chemin + ".tmp"
+        fd = os.open(temporaire, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(self.users, f, indent=2)
-        os.replace(tmp, self.path)
+            json.dump(self.utilisateurs, f, indent=2)
+        os.replace(temporaire, self.chemin)

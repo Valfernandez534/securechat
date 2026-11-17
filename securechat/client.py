@@ -6,114 +6,114 @@ import sys
 import threading
 
 from securechat import protocol
-from securechat.protocol import ProtocolError
+from securechat.protocol import ErreurProtocole
 
 
-def make_client_context(cafile):
-    # verifies the server certificate and hostname
-    context = ssl.create_default_context(cafile=cafile)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    return context
+def creer_contexte_client(fichier_ca):
+    contexte = ssl.create_default_context(cafile=fichier_ca)
+    contexte.minimum_version = ssl.TLSVersion.TLSv1_2
+    return contexte
 
 
-def connect(host, port, cafile):
-    context = make_client_context(cafile)
-    raw = socket.create_connection((host, port), timeout=10)
+def connecter(hote, port, fichier_ca):
+    contexte = creer_contexte_client(fichier_ca)
+    brut = socket.create_connection((hote, port), timeout=10)
     try:
-        conn = context.wrap_socket(raw, server_hostname=host)
+        connexion = contexte.wrap_socket(brut, server_hostname=hote)
     except (ssl.SSLError, OSError):
-        raw.close()
+        brut.close()
         raise
-    conn.settimeout(None)
-    return conn
+    connexion.settimeout(None)
+    return connexion
 
 
-def login(conn, reader, user, password, register=False):
-    """Returns (ok, text) with the server answer."""
-    kind = "register" if register else "login"
-    conn.sendall(protocol.encode({"type": kind, "user": user, "password": password}))
-    answer = protocol.read_message(reader)
-    if answer is None:
-        return False, "connection closed by server"
-    return answer["type"] == "ok", answer.get("text", "")
+def connexion_compte(connexion, lecteur, nom, mot_de_passe, inscription=False):
+    genre = "register" if inscription else "login"
+    connexion.sendall(protocol.encoder({"type": genre, "user": nom, "password": mot_de_passe}))
+    reponse = protocol.lire_message(lecteur)
+    if reponse is None:
+        return False, "connexion fermee par le serveur"
+    return reponse["type"] == "ok", reponse.get("text", "")
 
 
-def clean(text):
-    # defence in depth: never print raw control characters coming from the network
-    return "".join(c for c in str(text) if c.isprintable())
+def nettoyer_affichage(texte):
+    return "".join(c for c in str(texte) if c.isprintable())
 
 
-def format_message(message):
+def formater_message(message):
     if message["type"] == "msg":
-        return f"[{clean(message.get('from'))}] {clean(message.get('text'))}"
+        auteur = nettoyer_affichage(message.get("from"))
+        return f"[{auteur}] {nettoyer_affichage(message.get('text'))}"
     if message["type"] == "error":
-        return f"! {clean(message.get('text'))}"
-    return f"* {clean(message.get('text'))}"
+        return f"! {nettoyer_affichage(message.get('text'))}"
+    return f"* {nettoyer_affichage(message.get('text'))}"
 
 
-def receive_loop(reader):
+def boucle_reception(lecteur):
     while True:
         try:
-            message = protocol.read_message(reader)
-        except ProtocolError:
+            message = protocol.lire_message(lecteur)
+        except ErreurProtocole:
             continue
         except OSError:
             break
         if message is None:
             break
-        print(format_message(message))
-    print("* disconnected from server")
+        print(formater_message(message))
+    print("* deconnecte du serveur")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Secure chat client (TLS)")
-    parser.add_argument("user")
-    parser.add_argument("--host", default="localhost")
+    parser = argparse.ArgumentParser(description="Client de messagerie securisee (TLS)")
+    parser.add_argument("utilisateur")
+    parser.add_argument("--hote", default="localhost")
     parser.add_argument("--port", type=int, default=5555)
-    parser.add_argument("--ca", default="certs/server.crt", help="server certificate to trust")
-    parser.add_argument("--register", action="store_true", help="create the account first")
+    parser.add_argument("--ca", default="certs/server.crt", help="certificat du serveur")
+    parser.add_argument("--inscription", action="store_true", help="creer le compte d'abord")
     args = parser.parse_args()
 
     try:
-        protocol.check_username(args.user)
-    except ProtocolError as e:
+        protocol.verifier_nom_utilisateur(args.utilisateur)
+    except ErreurProtocole as e:
         parser.error(str(e))
-    password = getpass.getpass("Password: ")
+    mot_de_passe = getpass.getpass("Mot de passe : ")
 
     try:
-        conn = connect(args.host, args.port, args.ca)
+        connexion = connecter(args.hote, args.port, args.ca)
     except ssl.SSLCertVerificationError as e:
-        sys.exit(f"server certificate rejected: {e.verify_message}")
+        sys.exit(f"certificat du serveur refuse : {e.verify_message}")
     except (OSError, ssl.SSLError) as e:
-        sys.exit(f"cannot connect to {args.host}:{args.port}: {e}")
+        sys.exit(f"connexion impossible a {args.hote}:{args.port} : {e}")
 
-    reader = conn.makefile("rb")
-    ok, text = login(conn, reader, args.user, password, args.register)
-    print(("* " if ok else "! ") + clean(text))
+    lecteur = connexion.makefile("rb")
+    ok, texte = connexion_compte(
+        connexion, lecteur, args.utilisateur, mot_de_passe, args.inscription
+    )
+    print(("* " if ok else "! ") + nettoyer_affichage(texte))
     if not ok:
-        conn.close()
+        connexion.close()
         sys.exit(1)
 
-    threading.Thread(target=receive_loop, args=(reader,), daemon=True).start()
-    print("* type your messages, /quit to leave")
+    threading.Thread(target=boucle_reception, args=(lecteur,), daemon=True).start()
+    print("* tapez vos messages, /quit pour quitter")
     try:
-        for line in sys.stdin:
-            line = line.strip()
-            if line == "/quit":
+        for ligne in sys.stdin:
+            ligne = ligne.strip()
+            if ligne == "/quit":
                 break
-            if not line:
+            if not ligne:
                 continue
             try:
-                text = protocol.check_text(line)
-            except ProtocolError as e:
+                texte = protocol.verifier_texte(ligne)
+            except ErreurProtocole as e:
                 print(f"! {e}")
                 continue
-            conn.sendall(protocol.encode({"type": "msg", "text": text}))
-        conn.sendall(protocol.encode({"type": "quit"}))
+            connexion.sendall(protocol.encoder({"type": "msg", "text": texte}))
+        connexion.sendall(protocol.encoder({"type": "quit"}))
     except (KeyboardInterrupt, OSError):
         pass
     finally:
-        conn.close()
+        connexion.close()
 
 
 if __name__ == "__main__":

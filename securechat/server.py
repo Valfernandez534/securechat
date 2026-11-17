@@ -5,172 +5,173 @@ import ssl
 import threading
 
 from securechat import protocol
-from securechat.auth import UserStore
-from securechat.protocol import ProtocolError
+from securechat.auth import StockageUtilisateurs
+from securechat.protocol import ErreurProtocole
 
-log = logging.getLogger("securechat.server")
+journal = logging.getLogger("securechat.server")
 
-MAX_CLIENTS = 50
-MAX_LOGIN_ATTEMPTS = 3
-IDLE_TIMEOUT = 600
-
-
-def make_server_context(certfile, keyfile):
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(certfile, keyfile)
-    return context
+CLIENTS_MAX = 50
+TENTATIVES_MAX = 3
+DELAI_INACTIVITE = 600
 
 
-class ChatServer:
-    def __init__(self, host, port, context, users):
-        self.context = context
-        self.users = users
+def creer_contexte_serveur(certificat, cle):
+    contexte = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    contexte.minimum_version = ssl.TLSVersion.TLSv1_2
+    contexte.load_cert_chain(certificat, cle)
+    return contexte
+
+
+class ServeurMessagerie:
+    def __init__(self, hote, port, contexte, utilisateurs):
+        self.contexte = contexte
+        self.utilisateurs = utilisateurs
         self.clients = {}
-        self.lock = threading.Lock()
-        self.sock = socket.create_server((host, port))
-        self.sock.settimeout(1.0)
-        self.port = self.sock.getsockname()[1]
-        self.running = False
+        self.verrou = threading.Lock()
+        self.socket = socket.create_server((hote, port))
+        self.socket.settimeout(1.0)
+        self.port = self.socket.getsockname()[1]
+        self.actif = False
 
-    def serve_forever(self):
-        self.running = True
-        log.info("listening on port %d", self.port)
-        while self.running:
+    def demarrer(self):
+        self.actif = True
+        journal.info("ecoute sur le port %d", self.port)
+        while self.actif:
             try:
-                raw, addr = self.sock.accept()
+                brut, adresse = self.socket.accept()
             except TimeoutError:
                 continue
             except OSError:
                 break
-            thread = threading.Thread(target=self.handle_client, args=(raw, addr), daemon=True)
-            thread.start()
+            fil = threading.Thread(target=self.gerer_client, args=(brut, adresse), daemon=True)
+            fil.start()
 
-    def shutdown(self):
-        self.running = False
-        self.sock.close()
+    def arreter(self):
+        self.actif = False
+        self.socket.close()
 
-    def send(self, conn, message):
-        # the lock avoids two threads writing on the same TLS socket at once
-        with self.lock:
-            conn.sendall(protocol.encode(message))
+    def envoyer(self, connexion, message):
+        with self.verrou:
+            connexion.sendall(protocol.encoder(message))
 
-    def broadcast(self, message):
-        data = protocol.encode(message)
-        with self.lock:
-            for name, conn in list(self.clients.items()):
+    def diffuser(self, message):
+        donnees = protocol.encoder(message)
+        with self.verrou:
+            for nom, connexion in list(self.clients.items()):
                 try:
-                    conn.sendall(data)
+                    connexion.sendall(donnees)
                 except OSError:
-                    log.warning("could not send to %s, dropping client", name)
-                    del self.clients[name]
+                    journal.warning("envoi impossible a %s, client retire", nom)
+                    del self.clients[nom]
 
-    def handle_client(self, raw, addr):
-        raw.settimeout(IDLE_TIMEOUT)
+    def gerer_client(self, brut, adresse):
+        brut.settimeout(DELAI_INACTIVITE)
         try:
-            conn = self.context.wrap_socket(raw, server_side=True)
+            connexion = self.contexte.wrap_socket(brut, server_side=True)
         except (ssl.SSLError, OSError) as e:
-            log.warning("TLS handshake failed from %s: %s", addr[0], e)
-            raw.close()
+            journal.warning("echec de la negociation TLS depuis %s : %s", adresse[0], e)
+            brut.close()
             return
 
-        username = None
+        nom = None
         try:
-            reader = conn.makefile("rb")
-            username = self.authenticate(conn, reader, addr)
-            if username is None:
+            lecteur = connexion.makefile("rb")
+            nom = self.authentifier(connexion, lecteur, adresse)
+            if nom is None:
                 return
-            log.info("%s logged in from %s", username, addr[0])
-            self.broadcast({"type": "info", "text": f"{username} joined the chat"})
-            self.chat_loop(conn, reader, username)
+            journal.info("%s connecte depuis %s", nom, adresse[0])
+            self.diffuser({"type": "info", "text": f"{nom} a rejoint la discussion"})
+            self.boucle_discussion(connexion, lecteur, nom)
         except OSError as e:
-            log.info("connection with %s closed: %s", addr[0], e)
+            journal.info("connexion avec %s fermee : %s", adresse[0], e)
         finally:
-            if username is not None:
-                with self.lock:
-                    self.clients.pop(username, None)
-                log.info("%s disconnected", username)
-                self.broadcast({"type": "info", "text": f"{username} left the chat"})
-            conn.close()
+            if nom is not None:
+                with self.verrou:
+                    self.clients.pop(nom, None)
+                journal.info("%s deconnecte", nom)
+                self.diffuser({"type": "info", "text": f"{nom} a quitte la discussion"})
+            connexion.close()
 
-    def authenticate(self, conn, reader, addr):
-        for _ in range(MAX_LOGIN_ATTEMPTS):
+    def authentifier(self, connexion, lecteur, adresse):
+        for _ in range(TENTATIVES_MAX):
             try:
-                message = protocol.read_message(reader)
+                message = protocol.lire_message(lecteur)
                 if message is None:
                     return None
                 if message["type"] not in ("login", "register"):
-                    raise ProtocolError("login required")
-                name = protocol.check_username(message.get("user"))
-                password = protocol.check_password(message.get("password"))
-            except ProtocolError as e:
-                self.send(conn, {"type": "error", "text": str(e)})
+                    raise ErreurProtocole("connexion requise")
+                nom = protocol.verifier_nom_utilisateur(message.get("user"))
+                mot_de_passe = protocol.verifier_mot_de_passe(message.get("password"))
+            except ErreurProtocole as e:
+                self.envoyer(connexion, {"type": "error", "text": str(e)})
                 continue
 
             if message["type"] == "register":
-                if not self.users.register(name, password):
-                    self.send(conn, {"type": "error", "text": "username already taken"})
+                if not self.utilisateurs.inscrire(nom, mot_de_passe):
+                    self.envoyer(connexion, {"type": "error", "text": "nom deja utilise"})
                     continue
-                log.info("new user %s registered from %s", name, addr[0])
-            elif not self.users.verify(name, password):
-                log.warning("failed login for %s from %s", name, addr[0])
-                self.send(conn, {"type": "error", "text": "invalid credentials"})
+                journal.info("nouvel utilisateur %s inscrit depuis %s", nom, adresse[0])
+            elif not self.utilisateurs.verifier(nom, mot_de_passe):
+                journal.warning("echec de connexion pour %s depuis %s", nom, adresse[0])
+                self.envoyer(connexion, {"type": "error", "text": "identifiants invalides"})
                 continue
 
-            with self.lock:
-                if name in self.clients:
-                    error = "user already connected"
-                elif len(self.clients) >= MAX_CLIENTS:
-                    error = "server full"
+            with self.verrou:
+                if nom in self.clients:
+                    erreur = "utilisateur deja connecte"
+                elif len(self.clients) >= CLIENTS_MAX:
+                    erreur = "serveur plein"
                 else:
-                    error = None
-                    self.clients[name] = conn
-            if error:
-                self.send(conn, {"type": "error", "text": error})
+                    erreur = None
+                    self.clients[nom] = connexion
+            if erreur:
+                self.envoyer(connexion, {"type": "error", "text": erreur})
                 continue
-            self.send(conn, {"type": "ok", "text": f"welcome {name}"})
-            return name
+            self.envoyer(connexion, {"type": "ok", "text": f"bienvenue {nom}"})
+            return nom
 
-        self.send(conn, {"type": "error", "text": "too many attempts"})
+        self.envoyer(connexion, {"type": "error", "text": "trop de tentatives"})
         return None
 
-    def chat_loop(self, conn, reader, username):
+    def boucle_discussion(self, connexion, lecteur, nom):
         while True:
             try:
-                message = protocol.read_message(reader)
+                message = protocol.lire_message(lecteur)
                 if message is None or message["type"] == "quit":
                     return
                 if message["type"] != "msg":
-                    raise ProtocolError("unknown message type")
-                text = protocol.check_text(message.get("text"))
-            except ProtocolError as e:
-                self.send(conn, {"type": "error", "text": str(e)})
+                    raise ErreurProtocole("type de message inconnu")
+                texte = protocol.verifier_texte(message.get("text"))
+            except ErreurProtocole as e:
+                self.envoyer(connexion, {"type": "error", "text": str(e)})
                 continue
-            self.broadcast({"type": "msg", "from": username, "text": text})
+            self.diffuser({"type": "msg", "from": nom, "text": texte})
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Secure chat server (TLS)")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser = argparse.ArgumentParser(description="Serveur de messagerie securisee (TLS)")
+    parser.add_argument("--hote", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=5555)
-    parser.add_argument("--cert", default="certs/server.crt")
-    parser.add_argument("--key", default="certs/server.key")
-    parser.add_argument("--users", default="data/users.json")
+    parser.add_argument("--certificat", default="certs/server.crt")
+    parser.add_argument("--cle", default="certs/server.key")
+    parser.add_argument("--utilisateurs", default="data/users.json")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        context = make_server_context(args.cert, args.key)
+        contexte = creer_contexte_serveur(args.certificat, args.cle)
     except (OSError, ssl.SSLError) as e:
-        parser.error(f"cannot load certificate/key: {e}")
+        parser.error(f"impossible de charger le certificat ou la cle : {e}")
 
-    server = ChatServer(args.host, args.port, context, UserStore(args.users))
+    serveur = ServeurMessagerie(
+        args.hote, args.port, contexte, StockageUtilisateurs(args.utilisateurs)
+    )
     try:
-        server.serve_forever()
+        serveur.demarrer()
     except KeyboardInterrupt:
-        log.info("stopping server")
+        journal.info("arret du serveur")
     finally:
-        server.shutdown()
+        serveur.arreter()
 
 
 if __name__ == "__main__":

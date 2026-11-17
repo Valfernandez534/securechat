@@ -8,6 +8,8 @@ SecureChat est une messagerie multipoints : un serveur central et plusieurs clie
 de commande qui partagent un salon de discussion unique. Le but du projet est de livrer une
 fonction de sécurité simple mais correctement construite : canal chiffré et authentifié,
 comptes protégés, entrées validées, chaîne d'intégration continue avec analyse de sécurité.
+Le projet est mené individuellement : le périmètre fonctionnel de cette version β (salon
+unique, client en ligne de commande, bibliothèque standard Python) est calibré en conséquence.
 
 Architecture retenue : client lourd - serveur, en Python (bibliothèque standard uniquement).
 
@@ -21,10 +23,10 @@ Architecture retenue : client lourd - serveur, en Python (bibliothèque standard
 
 | ID | Fonction | Critère d'acceptation |
 |---|---|---|
-| F1 | Créer un compte | `client alice --register` crée le compte si le nom est libre et valide |
-| F2 | Se connecter | avec le bon mot de passe le serveur répond `welcome alice` |
+| F1 | Créer un compte | `client alice --inscription` crée le compte si le nom est libre et valide |
+| F2 | Se connecter | avec le bon mot de passe le serveur répond `bienvenue alice` |
 | F3 | Envoyer un message | le message est reçu par tous les utilisateurs connectés, préfixé par l'auteur |
-| F4 | Être prévenu des arrivées/départs | `alice joined the chat` / `alice left the chat` diffusés |
+| F4 | Être prévenu des arrivées/départs | `alice a rejoint la discussion` / `alice a quitte la discussion` diffusés |
 | F5 | Quitter | `/quit` ferme proprement la connexion |
 | F6 | Messages d'erreur clairs | toute entrée refusée renvoie un message `error` lisible |
 
@@ -35,14 +37,14 @@ Règles sur les données : nom d'utilisateur 3 à 20 caractères `[A-Za-z0-9_]`,
 
 | ID | Objectif | Mesure | Emplacement |
 |---|---|---|---|
-| S1 | Confidentialité et intégrité des échanges | TLS ≥ 1.2 | `server.py` `make_server_context`, `client.py` `make_client_context` |
-| S2 | Authentifier le serveur | le client vérifie certificat + nom d'hôte (`create_default_context`) | `client.py` `connect` |
-| S3 | Authentifier les utilisateurs | login obligatoire avant tout message | `server.py` `authenticate` |
+| S1 | Confidentialité et intégrité des échanges | TLS ≥ 1.2 | `server.py` `creer_contexte_serveur`, `client.py` `creer_contexte_client` |
+| S2 | Authentifier le serveur | le client vérifie certificat + nom d'hôte (`create_default_context`) | `client.py` `connecter` |
+| S3 | Authentifier les utilisateurs | login obligatoire avant tout message | `server.py` `authentifier` |
 | S4 | Protéger les mots de passe stockés | scrypt (n=2^14, r=8, p=1), sel de 16 octets, fichier en 0600 | `auth.py` |
 | S5 | Limiter le brute-force | 3 essais par connexion, comparaison `hmac.compare_digest` | `server.py`, `auth.py` |
-| S6 | Ne pas révéler les comptes existants | même message `invalid credentials`, hachage effectué même si l'utilisateur n'existe pas | `auth.py` `verify` |
+| S6 | Ne pas révéler les comptes existants | même message `identifiants invalides`, hachage effectué même si l'utilisateur n'existe pas | `auth.py` `verifier` |
 | S7 | Résister aux entrées malveillantes | validation stricte de chaque champ, taille max des trames | `protocol.py` |
-| S8 | Empêcher l'usurpation d'un utilisateur connecté | refus d'une 2e session sur le même compte | `server.py` `authenticate` |
+| S8 | Empêcher l'usurpation d'un utilisateur connecté | refus d'une 2e session sur le même compte | `server.py` `authentifier` |
 | S9 | Pas de secret dans le code | certificats et base utilisateurs hors dépôt, `.gitignore` | `.gitignore` |
 | S10 | Traçabilité | journalisation des connexions et échecs, sans mot de passe | `server.py` |
 
@@ -76,11 +78,11 @@ malveillant qui envoie des données forgées, un attaquant qui essaie des mots d
 
 ## 6. Cycle de vie
 
-- Code sous Git (GitLab), une branche par ticket, fusion par merge request.
-- CI GitLab à chaque push : `ruff` (qualité), `pytest` + couverture, `bandit` (analyse
-  statique de sécurité), `pip-audit` (vulnérabilités connues des dépendances). Un échec
-  bloque la fusion.
-- Versions des outils figées dans `requirements-dev.txt` pour des builds reproductibles.
+- Code sous Git (GitHub), une branche par ticket, fusion par pull request.
+- CI GitHub Actions (`.github/workflows/ci.yml`) à chaque push et pull request : `ruff`
+  (qualité), `pytest` + couverture, `bandit` (analyse statique de sécurité), `pip-audit`
+  (vulnérabilités connues des dépendances). Un échec doit bloquer la fusion sur `main`.
+- Outils de développement listés dans `requirements.txt` et vérifiés par `pip-audit` à chaque pipeline.
 - Version sémantique : 0.1.0 pour la β, 1.0.0 pour le rendu de janvier.
 - Déploiement : génération d'un certificat par serveur (`scripts/gen_cert.sh`), validité
   365 jours, à renouveler. La clé privée ne quitte pas le serveur.

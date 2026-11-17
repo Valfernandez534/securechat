@@ -1,12 +1,12 @@
 [project]
 name = "securechat"
 version = "0.1.0"
-description = "Multi-user chat over TLS (EPITA DevSecOps project)"
+description = "Messagerie multi-utilisateurs sur TLS (projet DevSecOps EPITA)"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.scripts]
-securechat-server = "securechat.server:main"
+securechat-serveur = "securechat.server:main"
 securechat-client = "securechat.client:main"
 
 [tool.ruff]

@@ -7,8 +7,7 @@ coverage.xml
 htmlcov/
 *.egg-info/
 .venv/
-
-# never commit keys or user data
 certs/
 data/
 *.key
+*.zip

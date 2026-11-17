@@ -3,54 +3,54 @@ import io
 import pytest
 
 from securechat import protocol
-from securechat.protocol import ProtocolError
+from securechat.protocol import ErreurProtocole
 
 
-def test_encode_decode_roundtrip():
-    message = {"type": "msg", "text": "hello é"}
-    assert protocol.decode(protocol.encode(message)) == message
+def test_aller_retour_encodage():
+    message = {"type": "msg", "text": "bonjour é"}
+    assert protocol.decoder(protocol.encoder(message)) == message
 
 
-def test_encode_rejects_long_message():
-    with pytest.raises(ProtocolError):
-        protocol.encode({"type": "msg", "text": "a" * protocol.MAX_LINE})
+def test_encodage_refuse_message_trop_long():
+    with pytest.raises(ErreurProtocole):
+        protocol.encoder({"type": "msg", "text": "a" * protocol.TAILLE_MAX_LIGNE})
 
 
-@pytest.mark.parametrize("line", [b"not json\n", b"\xff\xfe\n", b"[1, 2]\n", b'{"text": "x"}\n'])
-def test_decode_rejects_bad_input(line):
-    with pytest.raises(ProtocolError):
-        protocol.decode(line)
+@pytest.mark.parametrize("ligne", [b"pas json\n", b"\xff\xfe\n", b"[1, 2]\n", b'{"text": "x"}\n'])
+def test_decodage_refuse_entree_invalide(ligne):
+    with pytest.raises(ErreurProtocole):
+        protocol.decoder(ligne)
 
 
-def test_read_message_eof_and_too_long():
-    assert protocol.read_message(io.BytesIO(b"")) is None
-    with pytest.raises(ProtocolError):
-        protocol.read_message(io.BytesIO(b"a" * (protocol.MAX_LINE + 10)))
+def test_lecture_fin_de_flux_et_ligne_trop_longue():
+    assert protocol.lire_message(io.BytesIO(b"")) is None
+    with pytest.raises(ErreurProtocole):
+        protocol.lire_message(io.BytesIO(b"a" * (protocol.TAILLE_MAX_LIGNE + 10)))
 
 
-@pytest.mark.parametrize("name", ["bob", "alice_42", "A" * 20])
-def test_valid_usernames(name):
-    assert protocol.check_username(name) == name
+@pytest.mark.parametrize("nom", ["bob", "alice_42", "A" * 20])
+def test_noms_valides(nom):
+    assert protocol.verifier_nom_utilisateur(nom) == nom
 
 
-@pytest.mark.parametrize("name", ["ab", "a" * 21, "bob smith", "bob\n", "../etc", None, 42])
-def test_invalid_usernames(name):
-    with pytest.raises(ProtocolError):
-        protocol.check_username(name)
+@pytest.mark.parametrize("nom", ["ab", "a" * 21, "bob smith", "bob\n", "../etc", None, 42])
+def test_noms_invalides(nom):
+    with pytest.raises(ErreurProtocole):
+        protocol.verifier_nom_utilisateur(nom)
 
 
-def test_password_length():
-    assert protocol.check_password("12345678")
-    for bad in ["short", "x" * 129, None]:
-        with pytest.raises(ProtocolError):
-            protocol.check_password(bad)
+def test_longueur_mot_de_passe():
+    assert protocol.verifier_mot_de_passe("12345678")
+    for mauvais in ["court", "x" * 129, None]:
+        with pytest.raises(ErreurProtocole):
+            protocol.verifier_mot_de_passe(mauvais)
 
 
-def test_text_is_stripped():
-    assert protocol.check_text("  hi  ") == "hi"
+def test_texte_nettoye_des_espaces():
+    assert protocol.verifier_texte("  salut  ") == "salut"
 
 
-@pytest.mark.parametrize("text", ["", "   ", "x" * 501, "evil\x1b[2J", "a\nb", 12])
-def test_invalid_text(text):
-    with pytest.raises(ProtocolError):
-        protocol.check_text(text)
+@pytest.mark.parametrize("texte", ["", "   ", "x" * 501, "evil\x1b[2J", "a\nb", 12])
+def test_textes_invalides(texte):
+    with pytest.raises(ErreurProtocole):
+        protocol.verifier_texte(texte)
